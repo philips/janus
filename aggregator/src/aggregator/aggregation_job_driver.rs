@@ -980,6 +980,67 @@ mod tests {
     use std::{borrow::Borrow, sync::Arc, time::Duration as StdDuration};
     use trillium_tokio::Stopper;
 
+    // XXX
+    #[tokio::test]
+    async fn xxx_vdaf_sizes() {
+        const BITS: usize = 16;
+        const LEN: usize = 4096;
+        const MAX_MEASUREMENT: u128 = 1 << BITS;
+        let chunk_length: usize = ((BITS * LEN) as f64).sqrt() as usize;
+
+        println!("bits = {BITS}, len = {LEN}, chunk_length = {chunk_length}");
+
+        let vdaf = Prio3::new_sum_vec(2, BITS, LEN, chunk_length).unwrap();
+        let verify_key = random();
+        let report_id = random();
+
+        // Modulus is always a power of 2, so this is uniform. (also, it doesn't particularly matter
+        // if this is uniform.)
+        let measurement = random::<[u128; LEN]>()
+            .into_iter()
+            .map(|val| val % MAX_MEASUREMENT)
+            .collect();
+
+        let transcript = run_vdaf(&vdaf, &verify_key, &(), &report_id, &measurement);
+
+        assert_eq!(transcript.leader_prepare_transitions.len(), 1);
+        assert_eq!(transcript.helper_prepare_transitions.len(), 1);
+
+        println!(
+            "public_share length = {}",
+            transcript.public_share.get_encoded().len()
+        );
+        println!(
+            "leader_input_share length = {}",
+            transcript.leader_input_share.get_encoded().len()
+        );
+        println!(
+            "helper_input_share length = {}",
+            transcript.helper_input_share.get_encoded().len()
+        );
+
+        let leader_prepare_transition = transcript.leader_prepare_transitions.first().unwrap();
+        let helper_prepare_transition = transcript.helper_prepare_transitions.first().unwrap();
+
+        println!(
+            "leader message length = {}",
+            leader_prepare_transition.message.get_encoded().len()
+        );
+        println!(
+            "helper message length = {}",
+            helper_prepare_transition.message.get_encoded().len()
+        ); // in DAP, this will be encapsulated in a PrepareStepResult, resulting in +1 byte
+
+        println!(
+            "leader aggregate share length = {}",
+            transcript.leader_aggregate_share.get_encoded().len()
+        );
+        println!(
+            "helper aggregate share length = {}",
+            transcript.helper_aggregate_share.get_encoded().len()
+        );
+    }
+
     #[tokio::test]
     async fn aggregation_job_driver() {
         // This is a minimal test that AggregationJobDriver::run() will successfully find
