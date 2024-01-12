@@ -4102,9 +4102,10 @@ impl<C: Clock> Transaction<'_, C> {
         ))
     }
 
-    /// Deletes old client reports for a given task, that is, client reports whose timestamp is
-    /// older than the task's report expiry age. Up to `limit` client reports will be deleted.
-    /// Returns the number of client reports deleted.
+    /// Deletes old client reports for a given task, that is, client reports whose time_precision
+    /// window is entirely older than the task's report expiry age. Up to `limit` client reports
+    /// will be deleted. Returns the number of client reports deleted.
+    // XXX: need to apply GC logic modification to other places that read/write client reports
     #[tracing::instrument(skip(self), err)]
     pub async fn delete_expired_client_reports(
         &self,
@@ -4117,7 +4118,7 @@ impl<C: Clock> Transaction<'_, C> {
                     SELECT client_reports.id FROM client_reports
                     JOIN tasks ON tasks.id = client_reports.task_id
                     WHERE tasks.task_id = $1
-                      AND client_reports.client_timestamp < COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
+                      AND FLOOR(1 + client_reports.client_timestamp / tasks.time_precision) * tasks.time_precision + tasks.time_precision < COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
                     LIMIT $3
                 )
                 DELETE FROM client_reports
