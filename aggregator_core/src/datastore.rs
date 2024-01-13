@@ -4118,7 +4118,7 @@ impl<C: Clock> Transaction<'_, C> {
                     SELECT client_reports.id FROM client_reports
                     JOIN tasks ON tasks.id = client_reports.task_id
                     WHERE tasks.task_id = $1
-                      AND FLOOR(1 + client_reports.client_timestamp / tasks.time_precision) * tasks.time_precision + tasks.time_precision < COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
+                      AND TO_TIMESTAMP(FLOOR(1 + EXTRACT(EPOCH FROM client_reports.client_timestamp) * tasks.time_precision + tasks.time_precision < COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
                     LIMIT $3
                 )
                 DELETE FROM client_reports
