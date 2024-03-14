@@ -2405,6 +2405,90 @@ mod tests {
 
     #[allow(clippy::unit_arg)]
     #[tokio::test]
+    async fn aggregate_init_job_hitting_same_batch_that_is_gc_eligible() {
+        // install_test_trace_subscriber();
+        // let clock = MockClock::default();
+        // let ephemeral_datastore = ephemeral_datastore().await;
+        // let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        // let handler = aggregator_handler(
+        //     datastore.clone(),
+        //     clock.clone(),
+        //     TestRuntime::default(),
+        //     &noop_meter(),
+        //     Config {
+        //         // Increase the likelihood of a conflict.
+        //         batch_aggregation_shard_count: 1,
+        //         ..Default::default()
+        //     },
+        // )
+        // .await
+        // .unwrap();
+
+        let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
+
+        let report_expiry_age = Duration::from_hours(24).unwrap();
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake)
+            .with_time_precision(Duration::from_hours(1).unwrap())
+            .with_report_expiry_age(Some(report_expiry_age))
+            .build();
+
+        let helper_task = task.helper_view().unwrap();
+
+        let vdaf = dummy_vdaf::Vdaf::new();
+        let aggregation_param = dummy_vdaf::AggregationParam(0);
+        let prep_init_generator = PrepareInitGenerator::new(
+            clock.clone(),
+            helper_task.clone(),
+            vdaf.clone(),
+            aggregation_param,
+        );
+
+        datastore
+            .put_aggregator_task(&task.helper_view().unwrap())
+            .await
+            .unwrap();
+
+        // Create a happy path report, and submit it. This will create a batch.
+        let aggregation_job_id: AggregationJobId = random();
+        let (prepare_init_0, transcript_0) = prep_init_generator.next(&());
+        let request = AggregationJobInitializeReq::new(
+            aggregation_param.get_encoded(),
+            PartialBatchSelector::new_time_interval(),
+            Vec::from([prepare_init_0.clone()]),
+        );
+        // Submit the aggregation request.
+        let mut test_conn =
+            put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
+        assert_eq!(test_conn.status(), Some(Status::Ok));
+        let aggregate_resp: AggregationJobResp = dbg!(decode_response_body(&mut test_conn).await);
+
+        // need more checks for validity
+
+        // Create another report belonging to the same batch.
+        let (prepare_init_1, transcript_1) = prep_init_generator.next(&());
+
+        // Advance the clock well past the report expiry age.
+        clock.advance(
+            &report_expiry_age
+                .add(&Duration::from_hours(1).unwrap())
+                .unwrap(),
+        );
+
+        // Submit the next aggregation request.
+        let aggregation_job_id: AggregationJobId = random();
+        let request = AggregationJobInitializeReq::new(
+            aggregation_param.get_encoded(),
+            PartialBatchSelector::new_time_interval(),
+            Vec::from([prepare_init_1.clone()]),
+        );
+        let mut test_conn =
+            put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
+        assert_eq!(test_conn.status(), Some(Status::Ok));
+        let aggregate_resp: AggregationJobResp = dbg!(decode_response_body(&mut test_conn).await);
+    }
+
+    #[allow(clippy::unit_arg)]
+    #[tokio::test]
     async fn aggregate_init_change_report_timestamp() {
         let test_case = setup_aggregate_init_test().await;
 
