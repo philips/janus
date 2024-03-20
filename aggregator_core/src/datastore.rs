@@ -100,7 +100,7 @@ macro_rules! supported_schema_versions {
 // version is seen, [`Datastore::new`] fails.
 //
 // Note that the latest supported version must be first in the list.
-supported_schema_versions!(5, 4, 3);
+supported_schema_versions!(5);
 
 /// Datastore represents a datastore for Janus, with support for transactional reads and writes.
 /// In practice, Datastore instances are currently backed by a PostgreSQL database.
@@ -594,6 +594,7 @@ impl<C: Clock> Transaction<'_, C> {
     /// Writes a task into the datastore.
     #[tracing::instrument(skip(self, task), fields(task_id = ?task.id()), err)]
     pub async fn put_aggregator_task(&self, task: &AggregatorTask) -> Result<(), Error> {
+        let now = self.clock.now().as_naive_date_time()?;
         // Main task insert.
         let stmt = self
             .prepare_cached(
@@ -602,10 +603,10 @@ impl<C: Clock> Transaction<'_, C> {
                     max_batch_query_count, task_expiration, report_expiry_age, min_batch_size,
                     time_precision, tolerable_clock_skew, collector_hpke_config, vdaf_verify_key,
                     aggregator_auth_token_type, aggregator_auth_token, aggregator_auth_token_hash,
-                    collector_auth_token_type, collector_auth_token_hash, created_at, updated_by)
+                    collector_auth_token_type, collector_auth_token_hash, created_at, updated_at, updated_by)
                 VALUES (
                     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
-                    $19, $20
+                    $19, $20, $21
                 )
                 ON CONFLICT DO NOTHING",
             )
@@ -679,7 +680,8 @@ impl<C: Clock> Transaction<'_, C> {
                     &task
                         .collector_auth_token_hash()
                         .map(|token_hash| token_hash.as_ref()),
-                    /* created_at */ &self.clock.now().as_naive_date_time()?,
+                    /* created_at */ &now,
+                    /* updated_at */ &now,
                     /* updated_by */ &self.name,
                 ],
             )
@@ -744,6 +746,34 @@ impl<C: Clock> Transaction<'_, C> {
                 .await?,
         )?;
         Ok(())
+    }
+
+    /// Sets or unsets the expiration date of a task.
+    #[tracing::instrument(skip(self))]
+    pub async fn update_task_expiration(
+        &self,
+        task_id: &TaskId,
+        task_expiration: Option<&Time>,
+    ) -> Result<(), Error> {
+        let stmt = self
+            .prepare_cached(
+                "UPDATE tasks SET task_expiration = $1, updated_at = $2, updated_by = $3
+                    WHERE task_id = $4",
+            )
+            .await?;
+        check_single_row_mutation(
+            self.execute(
+                &stmt,
+                &[
+                    /* task_expiration */
+                    &task_expiration.map(Time::as_naive_date_time).transpose()?,
+                    /* updated_at */ &self.clock.now().as_naive_date_time()?,
+                    /* updated_by */ &self.name,
+                    /* task_id */ &task_id.as_ref(),
+                ],
+            )
+            .await?,
+        )
     }
 
     /// Fetch the task parameters corresponing to the provided `task_id`.
